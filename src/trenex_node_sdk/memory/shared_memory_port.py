@@ -2,16 +2,12 @@ import numpy as np
 from multiprocessing import shared_memory, Lock
 import threading
 
-from core.utils.identity import IDGenerator
-from core.debug.profiler import Profiler
-
 class SharedMemoryPort:
     """
     Represents a shared memory block for inter-process communication.
     Provides methods to read and write data with thread safety.
     """
 
-    @Profiler.profile
     def __init__(self, name: str, shape: tuple, dtype=np.float64):
         """
         Initialize a shared memory port.
@@ -21,7 +17,6 @@ class SharedMemoryPort:
             shape (tuple): Shape of the shared memory array.
             dtype (numpy.dtype, optional): Data type of the array (default: float64).
         """
-        self.id = IDGenerator.generate_id()
         self.name = name
         self.shape = shape
         self.dtype = dtype
@@ -39,7 +34,6 @@ class SharedMemoryPort:
         # Create a NumPy array view over the shared memory buffer.
         self.array = np.ndarray(self.shape, dtype=self.dtype, buffer=self.shm.buf)
 
-    @Profiler.profile
     def _initialize_memory(self):
         """
         Zero out the shared memory when first created.
@@ -47,7 +41,6 @@ class SharedMemoryPort:
         temp_array = np.ndarray(self.shape, dtype=self.dtype, buffer=self.shm.buf)
         temp_array.fill(0)
 
-    @Profiler.profile
     def write(self, data: np.ndarray):
         """
         Write new data to the shared memory block.
@@ -64,7 +57,6 @@ class SharedMemoryPort:
         with self.lock:
             np.copyto(self.array, data)
 
-    @Profiler.profile
     def read(self) -> np.ndarray:
         """
         Read the current data from the shared memory block.
@@ -75,14 +67,12 @@ class SharedMemoryPort:
         with self.lock:
             return self.array.copy()
 
-    @Profiler.profile
     def close(self):
         """
         Close the shared memory block.
         """
         self.shm.close()
 
-    @Profiler.profile
     def unlink(self):
         """
         Unlink (delete) the shared memory block from the system.
