@@ -4,11 +4,9 @@ from typing import Dict, Tuple
 import numpy as np
 from dataclasses import dataclass
 
-from core.node.node_io import NodeIO, IO
-from core.node.node_param import Parameters
-from core.memory.shared_memory_port import SharedMemoryPort
-from core.utils.identity import IDGenerator
-from core.debug.logger import gl_logger
+from trenex_node_sdk.node.node_io import NodeIO, IO
+from trenex_node_sdk.node.node_param import Parameters
+from trenex_node_sdk.memory.shared_memory_port import SharedMemoryPort
 
 class Node(ABC):
     """
@@ -16,7 +14,6 @@ class Node(ABC):
     Each node has a configuration (NodeConfig) that defines its inputs, outputs, and parameters.
     """
     def __init__(self, name: str = None):
-        self.id = IDGenerator.generate_id(self)
         self.name = name if name else f"Node_{self.id}"
         self._static_params = Parameters(self)  # Static Parameters for the node.
         self._dynamic_params = Parameters(self) # Dynamic Parameters for the node.
