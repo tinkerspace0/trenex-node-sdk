@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trenex-NodeTemplate"
+version = "0.1.0"
+description = "Node package for NodeTemplate"
+authors = [ { name = "Your Name", email = "you@example.com" } ]
+license = { text = "MIT" }
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["trenex-node-sdk>=0.1.0"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["NodeTemplate*"]
