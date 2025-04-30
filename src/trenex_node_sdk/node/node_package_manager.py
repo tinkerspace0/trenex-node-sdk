@@ -145,7 +145,7 @@ class NodePackageManager:
         token = fernet.encrypt(buf.read())
         Path(output_file).write_bytes(token)
 
-    def import_node_package(self, src: str) -> Path:
+    def import_node_package(self, src: str) -> None:
         """
         Decrypt & unpack a .npkg (or validate & copy a node folder) into nodes_dir.
         Tries each registered key until one succeeds.
@@ -179,8 +179,6 @@ class NodePackageManager:
                 self._validate_node_folder(tmp_pkg)
                 shutil.move(tmpdir, str(dest))
 
-            return dest
-
         # 2) Plain folder
         elif src_path.is_dir():
             # Validate it’s truly the package root
@@ -191,7 +189,6 @@ class NodePackageManager:
             if dest.exists():
                 raise FileExistsError(f"Node already exists: {dest}")
             shutil.copytree(src_path, dest)
-            return dest
 
         else:
             raise ValueError(f"Unsupported package format: {src}")
