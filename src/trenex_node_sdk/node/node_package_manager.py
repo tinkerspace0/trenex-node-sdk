@@ -1,57 +1,61 @@
+import io
+import zipfile
 import shutil
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import List, Optional
+from cryptography.fernet import Fernet, InvalidToken
 
 class NodePackageManager:
     """
-    Provides utilities for scaffolding and managing standalone single-node packages.
+    Manages encrypted node packages.
 
-    Expects a directory of templates at:
-        <trenex_node_sdk>/templates/node_package/
-    containing placeholder files:
-      - NodeTemplate.py
-      - node.yaml
-      - pyproject.toml
-
-    The placeholders 'NodeTemplate' and 'category' in filenames and file contents
-    will be replaced with the actual node name and category.
+    - You can supply one or more Fernet keys when constructing the manager,
+      or register them later via add_key().
+    - pack_node_package() uses the *first* registered key to encrypt.
+    - import_node_package() will try each key in turn to decrypt.
+    - Default nodes_dir is '<root_dir>/nodes', auto-created on first access.
     """
-    def __init__(self, root_dir: str):
+
+    def __init__(
+        self,
+        root_dir: str,
+        keys: Optional[List[str]] = None,
+    ):
+        # Validate and store root_dir
         path = Path(root_dir)
-
-        if not path.is_absolute():
-            raise ValueError(f"Root directory must be an absolute path: {root_dir}")
-        if not path.exists():
-            raise ValueError(f"Root directory does not exist: {root_dir}")
-        if not path.is_dir():
-            raise ValueError(f"Root directory is not a directory: {root_dir}")
-
+        self._validate_dir(path, "Root directory")
         self.root_dir: Path = path
-        # by default, defer nodes_dir initialization until accessed
-        self._nodes_dir: Path = None
+
+        # nodes_dir will be lazy-created
+        self._nodes_dir: Optional[Path] = None
+
+        # Key management
+        self._keys: List[str] = keys.copy() if keys else []
+        self._fernets: List[Fernet] = []
+        for k in self._keys:
+            self._fernets.append(Fernet(k.encode()))
 
     @staticmethod
     def _validate_dir(path: Path, name: str):
         if not path.is_absolute():
             raise ValueError(f"{name} must be an absolute path: {path}")
         if not path.exists():
-            raise ValueError(f"{name} does not exist: {path}")
+            raise FileNotFoundError(f"{name} does not exist: {path}")
         if not path.is_dir():
-            raise ValueError(f"{name} is not a directory: {path}")
+            raise NotADirectoryError(f"{name} is not a directory: {path}")
 
     @property
     def nodes_dir(self) -> Path:
         """
         Directory where node packages are stored.
-        Defaults to '<root_dir>/nodes' if not set explicitly, creating it if necessary.
+        Defaults to '<root_dir>/nodes', creating it if necessary.
         """
         if self._nodes_dir is None:
             default = self.root_dir / "nodes"
-            # create the default directory if it doesn't exist
-            if not default.exists():
-                default.mkdir(parents=True, exist_ok=True)
-            # ensure it's a directory
+            default.mkdir(parents=True, exist_ok=True)
             if not default.is_dir():
-                raise FileNotFoundError(f"Default nodes_dir path exists and is not a directory: {default}")
+                raise NotADirectoryError(f"Default nodes_dir path exists and is not a directory: {default}")
             self._nodes_dir = default
         return self._nodes_dir
 
@@ -61,25 +65,21 @@ class NodePackageManager:
         Set a custom directory for node packages.
         """
         path = Path(dir_path)
-        # validate custom path
         self._validate_dir(path, "nodes_dir")
         self._nodes_dir = path
-        
+
     @staticmethod
     def create_node_template(destination: str, node_name: str, category: str = "custom") -> None:
         """
         Scaffold a new node package.
 
         Args:
-            destination (str): Path to the folder where the new package should be created.
-            node_name (str): The name of the node class (and module) to create.
-            category (str): The node category (default: 'custom').
+            destination: folder where the new package should be created.
+            node_name: the name of the node class (and module).
+            category: the node category (default: 'custom').
 
-        The function will:
-          1. Copy the template directory into '<destination>/<node_name>'.
-          2. Rename files and directories replacing 'NodeTemplate' with the given node_name.
-          3. In each copied file, replace occurrences of 'NodeTemplate' with node_name,
-             and 'category' with the provided category.
+        Copies from '<sdk_root>/templates/node_package', renaming all
+        'NodeTemplate' and 'category' placeholders.
         """
         sdk_root = Path(__file__).parent.parent
         template_dir = sdk_root / "templates" / "node_package"
@@ -90,19 +90,98 @@ class NodePackageManager:
         if dest_base.exists():
             raise FileExistsError(f"Destination already exists: {dest_base}")
 
-        # Copy the entire template tree
         shutil.copytree(template_dir, dest_base)
-
-        # Walk through copied files and rename/patch
-        for path in list(dest_base.rglob('*')):
-            # Rename files containing the placeholder
-            if 'NodeTemplate' in path.name or 'category' in path.name:
-                new_name = path.name.replace('NodeTemplate', node_name).replace('category', category)
+        for path in list(dest_base.rglob("*")):
+            # rename files/dirs
+            if "NodeTemplate" in path.name or "category" in path.name:
+                new_name = path.name.replace("NodeTemplate", node_name).replace("category", category)
                 path = path.rename(path.with_name(new_name))
-
-            # If it's a file, replace placeholders in its contents
+            # replace contents
             if path.is_file():
                 text = path.read_text()
-                text = text.replace('NodeTemplate', node_name)
-                text = text.replace('category', category)
+                text = text.replace("NodeTemplate", node_name)
+                text = text.replace("category", category)
                 path.write_text(text)
+
+    def add_key(self, key: str) -> None:
+        """
+        Register another Fernet key (for decryption or future encryption).
+
+        Key must be a 44-char URL-safe base64-encoded string.
+        """
+        if not isinstance(key, str) or len(key) != 44:
+            raise ValueError("Fernet key must be a 44-character URL-safe base64 string")
+        self._keys.append(key)
+        self._fernets.append(Fernet(key.encode()))
+
+    def pack_node_package(self, src_dir: str, output_file: str) -> None:
+        """
+        Zip & encrypt a node folder into a single .npkg file.
+        Uses the *first* registered key.
+        """
+        if not self._fernets:
+            raise RuntimeError("No encryption key available; register one via add_key().")
+
+        src = Path(src_dir)
+        if not src.is_dir():
+            raise ValueError(f"Source must be a directory: {src_dir}")
+        if not (src / "node.yaml").exists():
+            raise FileNotFoundError(f"Source directory is not a node package (missing node.yaml): {src_dir}")
+
+        # Zip in memory
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for f in src.rglob("*"):
+                zipf.write(f, arcname=f.relative_to(src))
+        buf.seek(0)
+
+        # Encrypt
+        token = self._fernets[0].encrypt(buf.read())
+        Path(output_file).write_bytes(token)
+
+    def import_node_package(self, src: str) -> Path:
+        """
+        Decrypt & unpack a .npkg (or copy a plain folder) into nodes_dir.
+        Tries each registered key until one succeeds.
+        Returns the Path to the installed package.
+        """
+        src_path = Path(src)
+
+        # 1) Encrypted archive
+        if src_path.suffix == ".npkg":
+            encrypted = src_path.read_bytes()
+            for f in self._fernets:
+                try:
+                    data = f.decrypt(encrypted)
+                    break
+                except InvalidToken:
+                    continue
+            else:
+                raise ValueError("Failed to decrypt node package with any provided key.")
+
+            pkg_name = src_path.stem
+            dest = self.nodes_dir / pkg_name
+            if dest.exists():
+                raise FileExistsError(f"Node already exists: {dest}")
+
+            with TemporaryDirectory(dir=self.root_dir) as tmpdir:
+                buf = io.BytesIO(data)
+                with zipfile.ZipFile(buf, "r") as zipf:
+                    zipf.extractall(tmpdir)
+                shutil.move(tmpdir, str(dest))
+
+            return dest
+
+        # 2) Plain folder
+        elif src_path.is_dir():
+            if not (src_path / "node.yaml").exists():
+                raise FileNotFoundError(f"Not a node package: {src_path}")
+            pkg_name = src_path.name
+            dest = self.nodes_dir / pkg_name
+            if dest.exists():
+                raise FileExistsError(f"Node already exists: {dest}")
+            shutil.copytree(src_path, dest)
+            return dest
+
+        else:
+            raise ValueError(f"Unsupported package format: {src}")

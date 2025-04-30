@@ -1,0 +1,7 @@
+cffi==1.17.1
+cryptography==44.0.2
+numpy==2.2.4
+pycparser==2.22
+setuptools==78.1.0
+-e git+https://github.com/tinkerspace0/trenex-node-sdk.git@849450733d7a6e379fc08b10c0b72e8aa313bb55#egg=trenex_node_sdk
+wheel==0.45.1
