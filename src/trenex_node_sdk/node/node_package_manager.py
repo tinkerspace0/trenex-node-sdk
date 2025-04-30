@@ -94,41 +94,6 @@ class NodePackageManager:
         self._validate_dir(path, "nodes_dir")
         self._nodes_dir = path
 
-    @staticmethod
-    def create_node_template(destination: str, node_name: str, category: str = "custom") -> None:
-        """
-        Scaffold a new node package.
-
-        Args:
-            destination: folder where the new package should be created.
-            node_name: the name of the node class (and module).
-            category: the node category (default: 'custom').
-
-        Copies from '<sdk_root>/templates/node_package', renaming all
-        'NodeTemplate' and 'category' placeholders.
-        """
-        sdk_root = Path(__file__).parent.parent
-        template_dir = sdk_root / "templates" / "node_package"
-        if not template_dir.is_dir():
-            raise FileNotFoundError(f"Template directory not found: {template_dir}")
-
-        dest_base = Path(destination) / node_name
-        if dest_base.exists():
-            raise FileExistsError(f"Destination already exists: {dest_base}")
-
-        shutil.copytree(template_dir, dest_base)
-        for path in list(dest_base.rglob("*")):
-            # rename files/dirs
-            if "NodeTemplate" in path.name or "category" in path.name:
-                new_name = path.name.replace("NodeTemplate", node_name).replace("category", category)
-                path = path.rename(path.with_name(new_name))
-            # replace contents
-            if path.is_file():
-                text = path.read_text()
-                text = text.replace("NodeTemplate", node_name)
-                text = text.replace("category", category)
-                path.write_text(text)
-
     def add_key(self, key: str) -> None:
         """
         Register another Fernet key (for decryption or future encryption).
@@ -325,3 +290,72 @@ class NodePackageManager:
                 if not p.is_file() or p.suffix != ".npkg":
                     raise ValueError(f"Not a valid .npkg file: {f}")
                 zipf.write(p, arcname=p.name)
+
+    # ────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def create_node_template(destination: str, node_name: str, category: str = "custom") -> None:
+        """
+        Scaffold a new node package by copying the SDK template,
+        renaming placeholders in names + contents.
+        """
+        template_dir = NodePackageManager._get_template_dir()
+        dest_base    = NodePackageManager._build_dest_base(destination, node_name)
+
+        NodePackageManager._copy_template_tree(template_dir, dest_base)
+        NodePackageManager._rename_placeholders(dest_base, node_name, category)
+        NodePackageManager._replace_placeholders_in_files(dest_base, node_name, category)
+
+    # ────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_template_dir() -> Path:
+        sdk_root     = Path(__file__).parent.parent
+        template_dir = sdk_root / "templates" / "node_package"
+        if not template_dir.is_dir():
+            raise FileNotFoundError(f"Template directory not found: {template_dir}")
+        return template_dir
+
+    @staticmethod
+    def _build_dest_base(destination: str, node_name: str) -> Path:
+        dest_base = Path(destination) / node_name
+        if dest_base.exists():
+            raise FileExistsError(f"Destination already exists: {dest_base}")
+        return dest_base
+
+    @staticmethod
+    def _copy_template_tree(src: Path, dst: Path) -> None:
+        """Copy the template directory tree into place."""
+        shutil.copytree(src, dst)
+
+    @staticmethod
+    def _rename_placeholders(root: Path, node_name: str, category: str) -> None:
+        """
+        Rename any file or directory whose name contains the placeholders
+        'NodeTemplate' or 'category'.
+        """
+        for path in list(root.rglob("*")):
+            if "NodeTemplate" in path.name or "category" in path.name:
+                new_name = (
+                    path.name
+                        .replace("NodeTemplate", node_name)
+                        .replace("category", category)
+                )
+                path.rename(path.with_name(new_name))
+
+    @staticmethod
+    def _replace_placeholders_in_files(root: Path, node_name: str, category: str) -> None:
+        """
+        For every file, load its text and replace
+        'NodeTemplate' → node_name and 'category' → category.
+        """
+        for path in root.rglob("*"):
+            if path.is_file():
+                text = path.read_text()
+                new_text = (
+                    text
+                        .replace("NodeTemplate", node_name)
+                        .replace("category", category)
+                )
+                if new_text != text:
+                    path.write_text(new_text)
