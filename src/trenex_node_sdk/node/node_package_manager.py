@@ -3,8 +3,10 @@ import zipfile
 import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import List, Optional
+from typing import List, Optional, Any
 from cryptography.fernet import Fernet, InvalidToken
+import importlib.util
+import sys
 
 class NodePackageManager:
     """
@@ -19,6 +21,7 @@ class NodePackageManager:
         • decrypt & unpack .npkg archives, or
         • validate & copy unpackaged node folders.
     - list_nodes() lists all installed node packages.
+    - create_node_instance() imports and returns an instance of a node class.
     - Default nodes_dir is '<root_dir>/nodes', auto-created on first access.
     """
 
@@ -242,3 +245,45 @@ class NodePackageManager:
                 except (FileNotFoundError, NotADirectoryError):
                     continue
         return names
+
+    def create_node_instance(self, package_name: str, *args: Any, **kwargs: Any) -> Any:
+        """
+        Dynamically import and instantiate the node class from an installed package.
+
+        Args:
+            package_name: name of the node package (directory name under nodes_dir).
+            *args, **kwargs: constructor arguments for the node class.
+
+        Returns:
+            An instance of the node class (class name == package_name).
+        """
+        pkg_dir = self.nodes_dir / package_name
+        if not pkg_dir.is_dir():
+            raise FileNotFoundError(f"Node package not found: {pkg_dir}")
+        self._validate_node_folder(pkg_dir)
+
+        # Locate the module file: prefer '<package_name>.py'
+        module_file = pkg_dir / f"{package_name}.py"
+        if not module_file.is_file():
+            py_files = list(pkg_dir.glob("*.py"))
+            if len(py_files) == 1:
+                module_file = py_files[0]
+            else:
+                raise FileNotFoundError(
+                    f"Cannot determine module file for '{package_name}'. Found: {[p.name for p in py_files]}"
+                )
+
+        # Load the module from its file
+        spec = importlib.util.spec_from_file_location(
+            f"nodepkg_{package_name}", str(module_file)
+        )
+        module = importlib.util.module_from_spec(spec)
+        # mypy may warn; loader is never None if spec is correct
+        spec.loader.exec_module(module)  
+
+        # Instantiate the class
+        class_name = package_name
+        if not hasattr(module, class_name):
+            raise AttributeError(f"Module '{module_file.name}' has no class '{class_name}'")
+        cls = getattr(module, class_name)
+        return cls(*args, **kwargs)
