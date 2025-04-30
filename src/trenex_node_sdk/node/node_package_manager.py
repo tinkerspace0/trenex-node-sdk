@@ -15,7 +15,9 @@ class NodePackageManager:
     - pack_node_package() uses:
         • the provided key (if given), adding it to the set of keys, or
         • the first registered key otherwise.
-    - import_node_package() will try each registered key in turn to decrypt.
+    - import_node_package() will:
+        • decrypt & unpack .npkg archives, or
+        • validate & copy unpackaged node folders.
     - Default nodes_dir is '<root_dir>/nodes', auto-created on first access.
     """
 
@@ -47,6 +49,21 @@ class NodePackageManager:
             raise FileNotFoundError(f"{name} does not exist: {path}")
         if not path.is_dir():
             raise NotADirectoryError(f"{name} is not a directory: {path}")
+
+    @staticmethod
+    def _validate_node_folder(path: Path):
+        """
+        Ensure `path` is the root of a node package:
+          - directory exists
+          - contains node.yaml
+          - contains pyproject.toml
+        """
+        if not path.is_dir():
+            raise NotADirectoryError(f"Not a directory: {path}")
+        if not (path / "node.yaml").is_file():
+            raise FileNotFoundError(f"Missing metadata file node.yaml in: {path}")
+        if not (path / "pyproject.toml").is_file():
+            raise FileNotFoundError(f"Missing metadata file pyproject.toml in: {path}")
 
     @property
     def nodes_dir(self) -> Path:
@@ -116,8 +133,7 @@ class NodePackageManager:
         """
         if not isinstance(key, str) or len(key) != 44:
             raise ValueError("Fernet key must be a 44-character URL-safe base64 string")
-        # This will raise if the key isn't valid
-        f = Fernet(key.encode())
+        f = Fernet(key.encode())  # will raise if invalid
         self._keys.append(key)
         self._fernets.append(f)
 
@@ -135,13 +151,9 @@ class NodePackageManager:
             output_file: path where to write the .npkg.
             key: optional Fernet key to use for this packaging; if provided,
                  adds it to the manager's key list and uses it. Otherwise uses the first registered key.
-
-        Raises:
-            RuntimeError if no key is available.
         """
         # Choose or register the key
         if key is not None:
-            # add_key will validate and append it
             self.add_key(key)
             fernet = self._fernets[-1]
         else:
@@ -150,10 +162,8 @@ class NodePackageManager:
             fernet = self._fernets[0]
 
         src = Path(src_dir)
-        if not src.is_dir():
-            raise ValueError(f"Source must be a directory: {src_dir}")
-        if not (src / "node.yaml").exists():
-            raise FileNotFoundError(f"Source directory is not a node package (missing node.yaml): {src_dir}")
+        # Validate it’s really a node folder
+        self._validate_node_folder(src)
 
         # Zip in memory
         buf = io.BytesIO()
@@ -168,7 +178,7 @@ class NodePackageManager:
 
     def import_node_package(self, src: str) -> Path:
         """
-        Decrypt & unpack a .npkg (or copy a plain folder) into nodes_dir.
+        Decrypt & unpack a .npkg (or validate & copy a node folder) into nodes_dir.
         Tries each registered key until one succeeds.
         Returns the Path to the installed package.
         """
@@ -195,14 +205,18 @@ class NodePackageManager:
                 buf = io.BytesIO(data)
                 with zipfile.ZipFile(buf, "r") as zipf:
                     zipf.extractall(tmpdir)
+                # Validate unpacked folder before final move
+                tmp_pkg = Path(tmpdir)
+                self._validate_node_folder(tmp_pkg)
                 shutil.move(tmpdir, str(dest))
 
             return dest
 
         # 2) Plain folder
         elif src_path.is_dir():
-            if not (src_path / "node.yaml").exists():
-                raise FileNotFoundError(f"Not a node package: {src_path}")
+            # Validate it’s truly the package root
+            self._validate_node_folder(src_path)
+
             pkg_name = src_path.name
             dest = self.nodes_dir / pkg_name
             if dest.exists():
