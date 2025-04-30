@@ -12,8 +12,10 @@ class NodePackageManager:
 
     - You can supply one or more Fernet keys when constructing the manager,
       or register them later via add_key().
-    - pack_node_package() uses the *first* registered key to encrypt.
-    - import_node_package() will try each key in turn to decrypt.
+    - pack_node_package() uses:
+        • the provided key (if given), adding it to the set of keys, or
+        • the first registered key otherwise.
+    - import_node_package() will try each registered key in turn to decrypt.
     - Default nodes_dir is '<root_dir>/nodes', auto-created on first access.
     """
 
@@ -31,10 +33,11 @@ class NodePackageManager:
         self._nodes_dir: Optional[Path] = None
 
         # Key management
-        self._keys: List[str] = keys.copy() if keys else []
+        self._keys: List[str] = []
         self._fernets: List[Fernet] = []
-        for k in self._keys:
-            self._fernets.append(Fernet(k.encode()))
+        if keys:
+            for k in keys:
+                self.add_key(k)
 
     @staticmethod
     def _validate_dir(path: Path, name: str):
@@ -55,7 +58,9 @@ class NodePackageManager:
             default = self.root_dir / "nodes"
             default.mkdir(parents=True, exist_ok=True)
             if not default.is_dir():
-                raise NotADirectoryError(f"Default nodes_dir path exists and is not a directory: {default}")
+                raise NotADirectoryError(
+                    f"Default nodes_dir path exists and is not a directory: {default}"
+                )
             self._nodes_dir = default
         return self._nodes_dir
 
@@ -107,20 +112,42 @@ class NodePackageManager:
         """
         Register another Fernet key (for decryption or future encryption).
 
-        Key must be a 44-char URL-safe base64-encoded string.
+        Key must be a 44-character URL-safe base64-encoded string.
         """
         if not isinstance(key, str) or len(key) != 44:
             raise ValueError("Fernet key must be a 44-character URL-safe base64 string")
+        # This will raise if the key isn't valid
+        f = Fernet(key.encode())
         self._keys.append(key)
-        self._fernets.append(Fernet(key.encode()))
+        self._fernets.append(f)
 
-    def pack_node_package(self, src_dir: str, output_file: str) -> None:
+    def pack_node_package(
+        self,
+        src_dir: str,
+        output_file: str,
+        key: Optional[str] = None
+    ) -> None:
         """
         Zip & encrypt a node folder into a single .npkg file.
-        Uses the *first* registered key.
+
+        Args:
+            src_dir: path to the node package directory (must contain node.yaml).
+            output_file: path where to write the .npkg.
+            key: optional Fernet key to use for this packaging; if provided,
+                 adds it to the manager's key list and uses it. Otherwise uses the first registered key.
+
+        Raises:
+            RuntimeError if no key is available.
         """
-        if not self._fernets:
-            raise RuntimeError("No encryption key available; register one via add_key().")
+        # Choose or register the key
+        if key is not None:
+            # add_key will validate and append it
+            self.add_key(key)
+            fernet = self._fernets[-1]
+        else:
+            if not self._fernets:
+                raise RuntimeError("No encryption key available; register one via add_key().")
+            fernet = self._fernets[0]
 
         src = Path(src_dir)
         if not src.is_dir():
@@ -135,8 +162,8 @@ class NodePackageManager:
                 zipf.write(f, arcname=f.relative_to(src))
         buf.seek(0)
 
-        # Encrypt
-        token = self._fernets[0].encrypt(buf.read())
+        # Encrypt and write out
+        token = fernet.encrypt(buf.read())
         Path(output_file).write_bytes(token)
 
     def import_node_package(self, src: str) -> Path:
