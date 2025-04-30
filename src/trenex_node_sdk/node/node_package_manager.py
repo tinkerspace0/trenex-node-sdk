@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 class NodePackageManager:
     """
-    Manages encrypted node packages.
+    Manages encrypted and unpackaged node packages.
 
     - You can supply one or more Fernet keys when constructing the manager,
       or register them later via add_key().
@@ -18,6 +18,7 @@ class NodePackageManager:
     - import_node_package() will:
         • decrypt & unpack .npkg archives, or
         • validate & copy unpackaged node folders.
+    - list_nodes() lists all installed node packages.
     - Default nodes_dir is '<root_dir>/nodes', auto-created on first access.
     """
 
@@ -226,3 +227,18 @@ class NodePackageManager:
 
         else:
             raise ValueError(f"Unsupported package format: {src}")
+
+    def list_nodes(self) -> List[str]:
+        """
+        Return a list of installed node package names in nodes_dir.
+        Only directories containing valid node.yaml and pyproject.toml are included.
+        """
+        names: List[str] = []
+        for entry in self.nodes_dir.iterdir():
+            if entry.is_dir():
+                try:
+                    self._validate_node_folder(entry)
+                    names.append(entry.name)
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+        return names
