@@ -260,30 +260,27 @@ class NodePackageManager:
         pkg_dir = self.nodes_dir / package_name
         if not pkg_dir.is_dir():
             raise FileNotFoundError(f"Node package not found: {pkg_dir}")
+        # Validate package folder
         self._validate_node_folder(pkg_dir)
 
-        # Locate the module file: prefer '<package_name>.py'
-        module_file = pkg_dir / f"{package_name}.py"
-        if not module_file.is_file():
-            py_files = list(pkg_dir.glob("*.py"))
-            if len(py_files) == 1:
-                module_file = py_files[0]
-            else:
-                raise FileNotFoundError(
-                    f"Cannot determine module file for '{package_name}'. Found: {[p.name for p in py_files]}"
-                )
+        # Ensure __init__.py exists
+        init_py = pkg_dir / "__init__.py"
+        if not init_py.is_file():
+            raise FileNotFoundError(f"Missing __init__.py in node package: {pkg_dir}")
 
-        # Load the module from its file
+        # Create a module spec for a package
         spec = importlib.util.spec_from_file_location(
-            f"nodepkg_{package_name}", str(module_file)
+            package_name,
+            str(init_py),
+            submodule_search_locations=[str(pkg_dir)]
         )
         module = importlib.util.module_from_spec(spec)
-        # mypy may warn; loader is never None if spec is correct
-        spec.loader.exec_module(module)  
+        # Insert into sys.modules so that `from .helper import ...` works
+        sys.modules[package_name] = module
+        spec.loader.exec_module(module)  # type: ignore
 
-        # Instantiate the class
-        class_name = package_name
-        if not hasattr(module, class_name):
-            raise AttributeError(f"Module '{module_file.name}' has no class '{class_name}'")
-        cls = getattr(module, class_name)
+        # Instantiate the class (must be named exactly package_name)
+        if not hasattr(module, package_name):
+            raise AttributeError(f"Package '{package_name}' has no class '{package_name}'")
+        cls = getattr(module, package_name)
         return cls(*args, **kwargs)
