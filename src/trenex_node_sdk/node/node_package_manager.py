@@ -284,3 +284,44 @@ class NodePackageManager:
             raise AttributeError(f"Package '{package_name}' has no class '{package_name}'")
         cls = getattr(module, package_name)
         return cls(*args, **kwargs)
+
+    def import_node_library(self, nlib_file: str) -> List[Path]:
+        """
+        Import a '.nlib' (zip of .npkg files) by unpacking and importing
+        each contained node package. Returns list of installed package Paths.
+        """
+        lib_path = Path(nlib_file)
+        if not lib_path.is_file() or lib_path.suffix != ".nlib":
+            raise ValueError(f"Not a .nlib file: {nlib_file}")
+
+        installed: List[Path] = []
+        # Extract all .npkg files into a temp dir, then import each
+        with TemporaryDirectory(dir=self.root_dir) as tmpdir:
+            with zipfile.ZipFile(lib_path, "r") as zipf:
+                zipf.extractall(tmpdir)
+
+            for npkg_path in Path(tmpdir).glob("*.npkg"):
+                installed_path = self.import_node_package(str(npkg_path))
+                installed.append(installed_path)
+
+        return installed
+
+    def export_node_library(self, npkg_files: List[str], output_file: str) -> None:
+        """
+        Bundle a collection of .npkg files into a single '.nlib' archive.
+
+        Args:
+            npkg_files: list of file paths to existing .npkg packages.
+            output_file: destination path for the .nlib (must end in .nlib).
+        """
+        out = Path(output_file)
+        if out.suffix != ".nlib":
+            raise ValueError(f"Output file must have '.nlib' extension: {output_file}")
+
+        # Write a zip containing each .npkg at top level
+        with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for f in npkg_files:
+                p = Path(f)
+                if not p.is_file() or p.suffix != ".npkg":
+                    raise ValueError(f"Not a valid .npkg file: {f}")
+                zipf.write(p, arcname=p.name)
