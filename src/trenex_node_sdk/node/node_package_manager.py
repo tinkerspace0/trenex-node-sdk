@@ -15,7 +15,56 @@ class NodePackageManager:
     The placeholders 'NodeTemplate' and 'category' in filenames and file contents
     will be replaced with the actual node name and category.
     """
+    def __init__(self, root_dir: str):
+        path = Path(root_dir)
 
+        if not path.is_absolute():
+            raise ValueError(f"Root directory must be an absolute path: {root_dir}")
+        if not path.exists():
+            raise ValueError(f"Root directory does not exist: {root_dir}")
+        if not path.is_dir():
+            raise ValueError(f"Root directory is not a directory: {root_dir}")
+
+        self.root_dir: Path = path
+        # by default, defer nodes_dir initialization until accessed
+        self._nodes_dir: Path = None
+
+    @staticmethod
+    def _validate_dir(path: Path, name: str):
+        if not path.is_absolute():
+            raise ValueError(f"{name} must be an absolute path: {path}")
+        if not path.exists():
+            raise ValueError(f"{name} does not exist: {path}")
+        if not path.is_dir():
+            raise ValueError(f"{name} is not a directory: {path}")
+
+    @property
+    def nodes_dir(self) -> Path:
+        """
+        Directory where node packages are stored.
+        Defaults to '<root_dir>/nodes' if not set explicitly, creating it if necessary.
+        """
+        if self._nodes_dir is None:
+            default = self.root_dir / "nodes"
+            # create the default directory if it doesn't exist
+            if not default.exists():
+                default.mkdir(parents=True, exist_ok=True)
+            # ensure it's a directory
+            if not default.is_dir():
+                raise FileNotFoundError(f"Default nodes_dir path exists and is not a directory: {default}")
+            self._nodes_dir = default
+        return self._nodes_dir
+
+    @nodes_dir.setter
+    def nodes_dir(self, dir_path: str):
+        """
+        Set a custom directory for node packages.
+        """
+        path = Path(dir_path)
+        # validate custom path
+        self._validate_dir(path, "nodes_dir")
+        self._nodes_dir = path
+        
     @staticmethod
     def create_node_template(destination: str, node_name: str, category: str = "custom") -> None:
         """
